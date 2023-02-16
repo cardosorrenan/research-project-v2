@@ -1,17 +1,16 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[51]:
 
 
+import os
 from operator import attrgetter
 from typing import List
 
 import neurokit2 as nk
 import numpy as np
 import wfdb
-
-# In[14]:
 
 
 def get_records_id(path: str) -> List[str]:
@@ -28,7 +27,9 @@ def get_records_id(path: str) -> List[str]:
     return list(map(lambda line: line.strip(), lines))
 
 
-def get_intervals_afib(sample: List[int], aux_note: List[str]) -> List[List[int]]:
+def get_intervals_afib(
+    sample: List[int], aux_note: List[str], signal_len: int
+) -> List[List[int]]:
     """
     Get the intervals of atrial fibrillation (AFIB) from a list of sample values and corresponding annotations.
 
@@ -43,9 +44,9 @@ def get_intervals_afib(sample: List[int], aux_note: List[str]) -> List[List[int]
     for i, label in enumerate(aux_note):
         if label == "(AFIB":
             afib_start = sample[i]
-            if i + 1 < len(sample):
-                afib_end = sample[i + 1] - 1
-                afib_intervals.append([afib_start, afib_end])
+            last_notation = len(sample) == (i + 1)
+            afib_end = signal_len if last_notation else sample[i + 1] - 1
+            afib_intervals.append([afib_start, afib_end])
     return afib_intervals
 
 
@@ -65,7 +66,7 @@ def get_values_within_intervals(
     values_within_intervals = []
     for interval in intervals:
         start_index, end_index = interval
-        if start_index < 0 or end_index >= len(signal) or start_index > end_index:
+        if start_index < 0 or end_index > len(signal) or start_index > end_index:
             # Skip invalid intervals
             continue
         values_within_intervals.extend(signal[start_index : end_index + 1])
@@ -97,37 +98,45 @@ def resample_ms(rri_signal, freq) -> List[float]:
     return [(MILISECONDS / freq) * rri for rri in rri_signal]
 
 
-# In[5]:
+def extract_afib():
+    AFDB_PATH = "mit-bih-atrial-fibrillation-database-1.0.0/files"
 
+    # Get list of record IDs
+    record_ids = get_records_id(AFDB_PATH)
 
-AFDB_PATH = "mit-bih-atrial-fibrillation-database-1.0.0/files"
+    # Remove problematic records
+    record_ids.remove("00735")
+    record_ids.remove("03665")
 
-# Get list of record IDs
-record_ids = get_records_id(AFDB_PATH)
+    RRI = []
+    # Process each record
+    for record_id in record_ids:
+        record_path = f"{AFDB_PATH}/{record_id}"
 
-# Remove problematic records
-record_ids.remove("00735")
-record_ids.remove("03665")
+        # Load ECG signal and annotation data
+        ecg_signal, ecg_metadata = wfdb.rdsamp(record_path)
+        signal_len = ecg_metadata["sig_len"]
 
-# Process each record
-for record_id in record_ids:
-    record_path = f"{AFDB_PATH}/{record_id}"
+        # Extract AFIB intervals from annotation data
+        sample, aux_note = attrgetter("sample", "aux_note")(
+            wfdb.rdann(record_path, "atr")
+        )
+        afib_intervals = get_intervals_afib(sample, aux_note, signal_len)
 
-    # Load ECG signal and annotation data
-    ecg_signal, ecg_metadata = wfdb.rdsamp(record_path)
+        # Process each lead in the ECG signal
+        for lead_idx, lead_signal in enumerate(ecg_signal.T):
+            # Segment signal into AFIB intervals and detect R-peaks
+            afib_signal = get_values_within_intervals(afib_intervals, lead_signal)
+            _, rpeaks = nk.ecg_peaks(afib_signal, sampling_rate=ecg_metadata["fs"])
+            ecg_rpeaks = rpeaks["ECG_R_Peaks"]
 
-    # Extract AFIB intervals from annotation data
-    sample, aux_note = attrgetter("sample", "aux_note")(wfdb.rdann(record_path, "atr"))
-    afib_intervals = get_intervals_afib(sample, aux_note)
+            # Compute RRI signal and resample to 1 ms resolution
+            rri_signal = extract_rri_signal(ecg_rpeaks, signal_len)
+            rri_signal_ms = resample_ms(rri_signal, ecg_metadata["fs"])
+            RRI.append(rri_signal_ms)
 
-    # Process each lead in the ECG signal
-    for lead_idx, lead_signal in enumerate(ecg_signal.T):
-        # Segment signal into AFIB intervals and detect R-peaks
-        afib_signal = get_values_within_intervals(afib_intervals, lead_signal)
-        _, rpeaks = nk.ecg_peaks(afib_signal, sampling_rate=ecg_metadata["fs"])
-        ecg_rpeaks = rpeaks["ECG_R_Peaks"]
+    directory = "./RRI"
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-        # Compute RRI signal and resample to 1 ms resolution
-        signal_len = len(lead_signal)
-        rri_signal = extract_rri_signal(ecg_rpeaks, signal_len)
-        rri_signal_ms = resample_ms(rri_signal, ecg_metadata["fs"])
+    np.save(f"{directory}/afib_output.npy", RRI)
