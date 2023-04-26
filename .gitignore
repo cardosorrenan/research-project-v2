@@ -3,5 +3,7 @@
 /mit-bih-atrial-fibrillation-database-1.0.0/files
 /long-term-af-database-1.0.0/files
 /mit-bih-normal-sinus-rhythm-database-1.0.0/files
+/draws/
+/output/v2/
 /.ipynb_checkpoints
 **/__pycache__
