@@ -4,6 +4,8 @@
 /long-term-af-database-1.0.0/files
 /mit-bih-normal-sinus-rhythm-database-1.0.0/files
 /draws/
-/output/v2/
+/output/autoclf/
 /.ipynb_checkpoints
 **/__pycache__
+*.csv
+*.csv#
