@@ -7,5 +7,6 @@
 /output/autoclf/
 /.ipynb_checkpoints
 **/__pycache__
-*.csv
-*.csv#
+/**/*.csv
+/**/*.npy
+**/*.csv#
